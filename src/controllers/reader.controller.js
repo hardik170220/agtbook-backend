@@ -6,7 +6,11 @@ exports.getAllReaders = async (req, res) => {
         const readers = await prisma.reader.findMany({
             include: {
                 _count: {
+<<<<<<< HEAD
                     select: { Order: true }
+=======
+                    select: { Interest: true, Order: true }
+>>>>>>> 64231013ff1c6a06b55ca4a8d3299151624886dd
                 }
             },
             orderBy: { createdat: 'desc' }
@@ -23,6 +27,12 @@ exports.getReaderById = async (req, res) => {
         const reader = await prisma.reader.findUnique({
             where: { id: parseInt(id) },
             include: {
+<<<<<<< HEAD
+=======
+                Interest: {
+                    include: { Book: true }
+                },
+>>>>>>> 64231013ff1c6a06b55ca4a8d3299151624886dd
                 Order: {
                     include: {
                         OrderedBook: {

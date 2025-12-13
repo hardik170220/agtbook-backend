@@ -18,7 +18,11 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // Routes
 app.use('/api/books', require('./routes/book.routes'));
 app.use('/api/masters', require('./routes/master.routes'));
+<<<<<<< HEAD
 
+=======
+app.use('/api/interests', require('./routes/interest.routes'));
+>>>>>>> 64231013ff1c6a06b55ca4a8d3299151624886dd
 app.use('/api/readers', require('./routes/reader.routes'));
 app.use('/api/orders', require('./routes/order.routes'));
 

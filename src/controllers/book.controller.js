@@ -1,7 +1,10 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 64231013ff1c6a06b55ca4a8d3299151624886dd
 exports.getAllBooks = async (req, res) => {
     try {
         const books = await prisma.book.findMany({

@@ -70,8 +70,12 @@ exports.createOrder = async (req, res) => {
                     },
                     ActivityLog: {
                         create: {
+<<<<<<< HEAD
                             description: 'Order placed',
                             readerId: reader.id
+=======
+                            description: 'Order placed'
+>>>>>>> 64231013ff1c6a06b55ca4a8d3299151624886dd
                         }
                     }
                 },
@@ -127,6 +131,7 @@ exports.updateOrderStatus = async (req, res) => {
         const { id } = req.params;
         const { status, description } = req.body; // description for log
 
+<<<<<<< HEAD
         const existingOrder = await prisma.order.findUnique({
             where: { id: parseInt(id) },
             select: { readerId: true }
@@ -134,14 +139,20 @@ exports.updateOrderStatus = async (req, res) => {
 
         if (!existingOrder) return res.status(404).json({ error: 'Order not found' });
 
+=======
+>>>>>>> 64231013ff1c6a06b55ca4a8d3299151624886dd
         const order = await prisma.order.update({
             where: { id: parseInt(id) },
             data: {
                 status,
                 ActivityLog: {
                     create: {
+<<<<<<< HEAD
                         description: description || `Order status updated to ${status}`,
                         readerId: existingOrder.readerId
+=======
+                        description: description || `Order status updated to ${status}`
+>>>>>>> 64231013ff1c6a06b55ca4a8d3299151624886dd
                     }
                 }
             }
