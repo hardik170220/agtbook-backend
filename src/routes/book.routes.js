@@ -25,6 +25,7 @@ const uploadFields = upload.fields([
 
 router.get('/', bookController.getAllBooks);
 router.get('/:id', bookController.getBookById);
+router.post('/bulk', bookController.createMultipleBooks);
 router.post('/', uploadFields, bookController.createBook);
 router.put('/:id', uploadFields, bookController.updateBook);
 router.delete('/:id', bookController.deleteBook);

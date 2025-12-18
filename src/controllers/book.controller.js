@@ -119,3 +119,70 @@ exports.deleteBook = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+exports.createMultipleBooks = async (req, res) => {
+    try {
+        const books = req.body;
+
+        if (!Array.isArray(books)) {
+            return res.status(400).json({ error: "Request body must be an array of books" });
+        }
+
+        if (books.length === 0) {
+            return res.status(400).json({ error: "Array of books cannot be empty" });
+        }
+
+        const preparedBooks = books.map(bookData => {
+            const {
+                title, description, frontImage, backImage, stockQty,
+                isAvailable, featured, languageId, categoryId, bookCode,
+                kabatNumber, bookSize, author, tikakar, prakashak,
+                sampadak, anuvadak, vishay, shreni1, shreni2, shreni3,
+                pages, yearAD, vikramSamvat, veerSamvat, price, prakar, edition
+            } = bookData;
+
+            return {
+                title,
+                description: description || null,
+                frontImage: frontImage || null,
+                backImage: backImage || null,
+                stockQty: stockQty ? parseInt(stockQty) : 0,
+                isAvailable: isAvailable === 'true' || isAvailable === true,
+                featured: featured === 'true' || featured === true,
+                languageId: languageId ? parseInt(languageId) : null,
+                categoryId: categoryId ? parseInt(categoryId) : null,
+                bookCode: parseInt(bookCode),
+                kabatNumber: kabatNumber ? parseInt(kabatNumber) : null,
+                bookSize: bookSize || null,
+                author: author || null,
+                tikakar: tikakar || null,
+                prakashak: prakashak || null,
+                sampadak: sampadak || null,
+                anuvadak: anuvadak || null,
+                vishay: vishay || null,
+                shreni1: shreni1 || null,
+                shreni2: shreni2 || null,
+                shreni3: shreni3 || null,
+                pages: pages ? parseInt(pages) : null,
+                yearAD: yearAD ? parseInt(yearAD) : null,
+                vikramSamvat: vikramSamvat ? parseInt(vikramSamvat) : null,
+                veerSamvat: veerSamvat ? parseInt(veerSamvat) : null,
+                price: price ? parseFloat(price) : null,
+                prakar: prakar || null,
+                edition: edition ? parseInt(edition) : null
+            };
+        });
+
+        const createdBooks = await prisma.book.createMany({
+            data: preparedBooks,
+            skipDuplicates: true, // Optional: skip if bookCode/id already exists (if unique constraints are set)
+        });
+
+        res.status(201).json({
+            message: `${createdBooks.count} books created successfully`,
+            count: createdBooks.count
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
