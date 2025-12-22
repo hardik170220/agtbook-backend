@@ -39,11 +39,14 @@ exports.createOrder = async (req, res) => {
                     throw new Error(`Book with ID ${bookId} not found`);
                 }
 
-                if (book.stockQty < quantity) {
-                    throw new Error(`Insufficient stock for book "${book.title}" (ID: ${bookId}). Available: ${book.stockQty}, Requested: ${quantity}`);
+                // Treat null/undefined stock as 0
+                const currentStock = book.stockQty || 0;
+
+                if (currentStock < quantity) {
+                    throw new Error(`Insufficient stock for book "${book.title}" (ID: ${bookId}). Available: ${currentStock}, Requested: ${quantity}`);
                 }
 
-                const newStock = book.stockQty - quantity;
+                const newStock = currentStock - quantity;
                 const isAvailable = newStock > 0;
 
                 await prisma.book.update({
