@@ -24,8 +24,45 @@ exports.createOrder = async (req, res) => {
                     }
                 });
             } else {
-                // Optional: Update reader info if provided
-                if (address) await prisma.reader.update({ where: { id: reader.id }, data: { address } });
+                // Check for changes and maintain history
+                const hasChanges =
+                    reader.firstname !== firstname ||
+                    reader.lastname !== lastname ||
+                    reader.email !== email ||
+                    reader.address !== address ||
+                    reader.city !== city ||
+                    reader.state !== state ||
+                    reader.pincode !== pincode;
+
+                if (hasChanges) {
+                    // Create history record with OLD details
+                    await prisma.readerHistory.create({
+                        data: {
+                            readerId: reader.id,
+                            firstname: reader.firstname,
+                            lastname: reader.lastname,
+                            email: reader.email,
+                            address: reader.address,
+                            city: reader.city,
+                            state: reader.state,
+                            pincode: reader.pincode
+                        }
+                    });
+
+                    // Update reader with NEW details
+                    reader = await prisma.reader.update({
+                        where: { id: reader.id },
+                        data: {
+                            firstname,
+                            lastname,
+                            email,
+                            address,
+                            city,
+                            state,
+                            pincode
+                        }
+                    });
+                }
             }
 
             // 2. Check Stock and Update Books

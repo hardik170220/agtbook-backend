@@ -29,6 +29,9 @@ exports.getReaderById = async (req, res) => {
                             include: { Book: true }
                         }
                     }
+                },
+                ReaderHistory: {
+                    orderBy: { changedAt: 'desc' }
                 }
             }
         });
