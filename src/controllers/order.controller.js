@@ -251,17 +251,36 @@ exports.updateOrderedBookStatus = async (req, res) => {
     try {
         const { orderId, bookId } = req.params;
         const { status } = req.body;
-        console.log(orderId, bookId, status);
+        const parsedOrderId = parseInt(orderId);
+        const parsedTargetId = parseInt(bookId);
 
-        const orderedBook = await prisma.orderedBook.findFirst({
+        // Try to find by Book ID (Foreign Key) first
+        let orderedBook = await prisma.orderedBook.findFirst({
             where: {
-                orderId: parseInt(orderId),
-                bookId: parseInt(bookId)
+                orderId: parsedOrderId,
+                bookId: parsedTargetId
             }
         });
 
+        // If not found, try to find by OrderedBook ID (Primary Key)
         if (!orderedBook) {
-            return res.status(404).json({ error: 'Ordered book not found in this order' });
+            orderedBook = await prisma.orderedBook.findFirst({
+                where: {
+                    orderId: parsedOrderId,
+                    id: parsedTargetId
+                }
+            });
+        }
+
+        if (!orderedBook) {
+            return res.status(404).json({
+                error: 'Ordered book not found in this order',
+                debug: {
+                    receivedOrderId: orderId,
+                    receivedId: bookId,
+                    message: 'Tried matching against both bookId (FK) and id (PK)'
+                }
+            });
         }
 
         const updated = await prisma.orderedBook.update({
