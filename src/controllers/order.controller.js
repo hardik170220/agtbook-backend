@@ -251,6 +251,7 @@ exports.updateOrderedBookStatus = async (req, res) => {
     try {
         const { orderId, bookId } = req.params;
         const { status } = req.body;
+        console.log(orderId, bookId, status);
 
         const orderedBook = await prisma.orderedBook.findFirst({
             where: {
