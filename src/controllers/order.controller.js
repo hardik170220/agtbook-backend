@@ -65,7 +65,9 @@ exports.createOrder = async (req, res) => {
                 }
             }
 
-            // 2. Check Stock and Update Books
+            // 2. Check Stock and Prepare Ordered Books Data
+            const orderedBooksData = [];
+
             for (const item of books) {
                 const bookId = parseInt(item.bookId);
                 const quantity = parseInt(item.quantity);
@@ -79,10 +81,11 @@ exports.createOrder = async (req, res) => {
                 // Treat null/undefined stock as 0
                 const currentStock = book.stockQty || 0;
 
-                // Allow backorders (negative stock) - specific requirement
-                // if (currentStock < quantity) {
-                //     throw new Error(`Insufficient stock for book "${book.title}" (ID: ${bookId}). Available: ${currentStock}, Requested: ${quantity}`);
-                // }
+                // Determine status based on stock availability
+                let bookStatus = 'NEW_ORDER'; // Default for in-stock
+                if (currentStock < quantity) {
+                    bookStatus = 'PENDING';
+                }
 
                 const newStock = currentStock - quantity;
                 const isAvailable = newStock > 0;
@@ -94,6 +97,12 @@ exports.createOrder = async (req, res) => {
                         isAvailable: isAvailable
                     }
                 });
+
+                orderedBooksData.push({
+                    bookId: bookId,
+                    quantity: quantity,
+                    status: bookStatus
+                });
             }
 
             // 3. Create Order
@@ -103,13 +112,7 @@ exports.createOrder = async (req, res) => {
                     shippingDetails,
                     status: 'PENDING',
                     OrderedBook: {
-                        create: books.map(book => ({
-                            bookId: parseInt(book.bookId),
-                            quantity: parseInt(book.quantity),
-                            bookId: parseInt(book.bookId),
-                            quantity: parseInt(book.quantity),
-                            status: 'NEW_ORDER'
-                        }))
+                        create: orderedBooksData
                     },
                     ActivityLog: {
                         create: {
