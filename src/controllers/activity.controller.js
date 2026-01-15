@@ -72,7 +72,7 @@ exports.getActivityLogsByReader = async (req, res) => {
 // Create a new activity log
 exports.createActivityLog = async (req, res) => {
     try {
-        const { description, orderId, readerId } = req.body;
+        const { action, description, orderId, readerId } = req.body;
 
         if (!description) {
             return res.status(400).json({ error: 'Description is required' });
@@ -80,6 +80,7 @@ exports.createActivityLog = async (req, res) => {
 
         const activityLog = await prisma.activityLog.create({
             data: {
+                action: action || "NOTE",
                 description,
                 orderId: orderId ? parseInt(orderId) : null,
                 readerId: readerId ? parseInt(readerId) : null,
@@ -99,11 +100,12 @@ exports.createActivityLog = async (req, res) => {
 exports.updateActivityLog = async (req, res) => {
     try {
         const { id } = req.params;
-        const { description, orderId, readerId } = req.body;
+        const { action, description, orderId, readerId } = req.body;
 
         const activityLog = await prisma.activityLog.update({
             where: { id: parseInt(id) },
             data: {
+                action,
                 description,
                 orderId: orderId ? parseInt(orderId) : null,
                 readerId: readerId ? parseInt(readerId) : null,

@@ -175,10 +175,12 @@ exports.updateOrderStatus = async (req, res) => {
 
         const existingOrder = await prisma.order.findUnique({
             where: { id: parseInt(id) },
-            select: { readerId: true }
+            select: { readerId: true, status: true }
         });
 
         if (!existingOrder) return res.status(404).json({ error: 'Order not found' });
+
+        const previousStatus = existingOrder.status;
 
         const order = await prisma.order.update({
             where: { id: parseInt(id) },
@@ -186,7 +188,8 @@ exports.updateOrderStatus = async (req, res) => {
                 status,
                 ActivityLog: {
                     create: {
-                        description: description || `Order status updated to ${status}`,
+                        action: 'STATUS_CHANGE',
+                        description: description || `Order status updated from ${previousStatus} -> ${status}`,
                         readerId: existingOrder.readerId
                     }
                 }
