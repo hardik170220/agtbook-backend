@@ -1,6 +1,49 @@
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
+// exports.getAllBooks = async (req, res) => {
+//     try {
+//         const page = parseInt(req.query.page) || 1;
+//         const limit = parseInt(req.query.limit) || 10;
+//         const search = req.query.search || "";
+//         const skip = (page - 1) * limit;
+
+//         const where = search ? {
+//             OR: [
+//                 { title: { contains: search, mode: "insensitive" } },
+//                 { author: { contains: search, mode: "insensitive" } },
+//                 { bookCode: isNaN(parseInt(search)) ? undefined : parseInt(search) }
+//             ].filter(Boolean)
+//         } : {};
+
+//         const [books, total] = await Promise.all([
+//             prisma.book.findMany({
+//                 where,
+//                 skip,
+//                 take: limit,
+//                 include: {
+//                     Language: true,
+//                     Category: true,
+//                 },
+//                 orderBy: { createdAt: "desc" }
+//             }),
+//             prisma.book.count({ where })
+//         ]);
+
+//         res.json({
+//             books,
+//             pagination: {
+//                 total,
+//                 page,
+//                 limit,
+//                 totalPages: Math.ceil(total / limit)
+//             }
+//         });
+//     } catch (error) {
+//         res.status(500).json({ error: error.message });
+//     }
+// };
+
 exports.getAllBooks = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
@@ -8,13 +51,41 @@ exports.getAllBooks = async (req, res) => {
         const search = req.query.search || "";
         const skip = (page - 1) * limit;
 
-        const where = search ? {
-            OR: [
-                { title: { contains: search, mode: "insensitive" } },
-                { author: { contains: search, mode: "insensitive" } },
-                { bookCode: isNaN(parseInt(search)) ? undefined : parseInt(search) }
-            ].filter(Boolean)
-        } : {};
+        // 1. Extract new filter parameters from query
+        const { languageId, categoryId, isAvailable } = req.query;
+
+        // 2. Build a dynamic WHERE clause using AND
+        const where = {
+            AND: [
+                // Search logic (keep your existing logic)
+                search ? {
+                    OR: [
+                        { title: { contains: search, mode: "insensitive" } },
+                        { author: { contains: search, mode: "insensitive" } },
+                        { bookCode: isNaN(parseInt(search)) ? undefined : parseInt(search) }
+                    ].filter(Boolean)
+                } : {},
+                
+                // Language filter (handles single ID or array of IDs)
+                languageId ? {
+                    languageId: Array.isArray(languageId) 
+                        ? { in: languageId.map(id => parseInt(id)) } 
+                        : parseInt(languageId)
+                } : {},
+                
+                // Category filter (handles single ID or array of IDs)
+                categoryId ? {
+                    categoryId: Array.isArray(categoryId) 
+                        ? { in: categoryId.map(id => parseInt(id)) } 
+                        : parseInt(categoryId)
+                } : {},
+                
+                // Availability filter (converts string "true"/"false" to boolean)
+                isAvailable !== undefined ? {
+                    isAvailable: isAvailable === "true"
+                } : {}
+            ].filter(q => Object.keys(q).length > 0) // Remove empty objects
+        };
 
         const [books, total] = await Promise.all([
             prisma.book.findMany({
