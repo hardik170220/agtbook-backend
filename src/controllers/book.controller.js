@@ -164,8 +164,10 @@ exports.createBook = async (req, res) => {
             data: {
                 title,
                 description: description || null,
-                frontImage: req.files && req.files["frontImage"] ? `${req.protocol}://${req.get("host")}/uploads/${req.files["frontImage"][0].filename}` : frontImage || null,
-                backImage: req.files && req.files["backImage"] ? `${req.protocol}://${req.get("host")}/uploads/${req.files["backImage"][0].filename}` : backImage || null,
+                // frontImage: req.files && req.files["frontImage"] ? `${req.protocol}://${req.get("host")}/uploads/${req.files["frontImage"][0].filename}` : frontImage || null,
+                // backImage: req.files && req.files["backImage"] ? `${req.protocol}://${req.get("host")}/uploads/${req.files["backImage"][0].filename}` : backImage || null,
+                frontImage:frontImage || null,
+                backImage:backImage || null,
                 stockQty: parseIntSafe(stockQty) || 0,
                 isAvailable: isAvailable === "true" || isAvailable === true,
                 featured: featured === "true" || featured === true,
