@@ -1,11 +1,10 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const db = require('../config/db');
 
 // Language Controllers
 exports.getAllLanguages = async (req, res) => {
     try {
-        const languages = await prisma.language.findMany();
-        res.json(languages);
+        const result = await db.query('SELECT * FROM "Language"');
+        res.json(result.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -14,10 +13,11 @@ exports.getAllLanguages = async (req, res) => {
 exports.createLanguage = async (req, res) => {
     try {
         const { name } = req.body;
-        const language = await prisma.language.create({
-            data: { name },
-        });
-        res.status(201).json(language);
+        const result = await db.query(
+            'INSERT INTO "Language" (name) VALUES ($1) RETURNING *',
+            [name]
+        );
+        res.status(201).json(result.rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -26,8 +26,8 @@ exports.createLanguage = async (req, res) => {
 // Category Controllers
 exports.getAllCategories = async (req, res) => {
     try {
-        const categories = await prisma.category.findMany();
-        res.json(categories);
+        const result = await db.query('SELECT * FROM "Category"');
+        res.json(result.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -36,9 +36,7 @@ exports.getAllCategories = async (req, res) => {
 exports.deleteLanguage = async (req, res) => {
     try {
         const { id } = req.params;
-        await prisma.language.delete({
-            where: { id: parseInt(id) },
-        });
+        await db.query('DELETE FROM "Language" WHERE id = $1', [parseInt(id)]);
         res.json({ message: "Language deleted successfully" });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -48,52 +46,58 @@ exports.deleteLanguage = async (req, res) => {
 // Update Language
 exports.updateLanguage = async (req, res) => {
     try {
-        const { id } = req.params
-        const { name } = req.body
+        const { id } = req.params;
+        const { name } = req.body;
 
         if (!name) {
-            return res.status(400).json({ error: "Name is required" })
+            return res.status(400).json({ error: "Name is required" });
         }
 
-        const updatedLanguage = await prisma.language.update({
-            where: { id: parseInt(id) },
-            data: { name },
-        })
+        const result = await db.query(
+            'UPDATE "Language" SET name = $1 WHERE id = $2 RETURNING *',
+            [name, parseInt(id)]
+        );
 
-        res.json(updatedLanguage)
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: "Language not found" });
+        }
+
+        res.json(result.rows[0]);
     } catch (error) {
-        res.status(500).json({ error: error.message })
+        res.status(500).json({ error: error.message });
     }
-}
+};
 
 // Update Category
 exports.updateCategory = async (req, res) => {
     try {
-        const { id } = req.params
-        const { name } = req.body
+        const { id } = req.params;
+        const { name } = req.body;
 
         if (!name) {
-            return res.status(400).json({ error: "Name is required" })
+            return res.status(400).json({ error: "Name is required" });
         }
 
-        const updatedCategory = await prisma.category.update({
-            where: { id: parseInt(id) },
-            data: { name },
-        })
+        const result = await db.query(
+            'UPDATE "Category" SET name = $1 WHERE id = $2 RETURNING *',
+            [name, parseInt(id)]
+        );
 
-        res.json(updatedCategory)
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: "Category not found" });
+        }
+
+        res.json(result.rows[0]);
     } catch (error) {
-        res.status(500).json({ error: error.message })
+        res.status(500).json({ error: error.message });
     }
-}
+};
 
 
 exports.deleteCategory = async (req, res) => {
     try {
         const { id } = req.params;
-        await prisma.category.delete({
-            where: { id: parseInt(id) },
-        });
+        await db.query('DELETE FROM "Category" WHERE id = $1', [parseInt(id)]);
         res.json({ message: "Category deleted successfully" });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -103,10 +107,11 @@ exports.deleteCategory = async (req, res) => {
 exports.createCategory = async (req, res) => {
     try {
         const { name } = req.body;
-        const category = await prisma.category.create({
-            data: { name },
-        });
-        res.status(201).json(category);
+        const result = await db.query(
+            'INSERT INTO "Category" (name) VALUES ($1) RETURNING *',
+            [name]
+        );
+        res.status(201).json(result.rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

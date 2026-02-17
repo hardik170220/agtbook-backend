@@ -1,198 +1,172 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const db = require('../config/db');
 
 exports.createOrder = async (req, res) => {
+    const client = await db.pool.connect();
     try {
         const { firstname, lastname, mobile, email, address, city, state, pincode, books, shippingDetails } = req.body;
-        // books: [{ bookId, quantity }]
 
-        // Use transaction to ensure data integrity
-        const result = await prisma.$transaction(async (prisma) => {
-            // 1. Find or Create Reader
-            let reader = await prisma.reader.findUnique({ where: { mobile } });
-            if (!reader) {
-                reader = await prisma.reader.create({
-                    data: {
-                        firstname,
-                        lastname,
-                        mobile,
-                        email,
-                        address,
-                        city,
-                        state,
-                        pincode
-                    }
-                });
-            } else {
-                // Check for changes and maintain history
-                const hasChanges =
-                    reader.firstname !== firstname ||
-                    reader.lastname !== lastname ||
-                    reader.email !== email ||
-                    reader.address !== address ||
-                    reader.city !== city ||
-                    reader.state !== state ||
-                    reader.pincode !== pincode;
+        await client.query('BEGIN');
 
-                if (hasChanges) {
-                    // Create history record with OLD details
-                    await prisma.readerHistory.create({
-                        data: {
-                            readerId: reader.id,
-                            firstname: reader.firstname,
-                            lastname: reader.lastname,
-                            email: reader.email,
-                            address: reader.address,
-                            city: reader.city,
-                            state: reader.state,
-                            pincode: reader.pincode
-                        }
-                    });
+        // 1. Find or Create Reader
+        let reader;
+        const readerResult = await client.query('SELECT * FROM "Reader" WHERE mobile = $1', [mobile]);
 
-                    // Update reader with NEW details
-                    reader = await prisma.reader.update({
-                        where: { id: reader.id },
-                        data: {
-                            firstname,
-                            lastname,
-                            email,
-                            address,
-                            city,
-                            state,
-                            pincode
-                        }
-                    });
-                }
+        if (readerResult.rows.length === 0) {
+            const insertReader = `
+                INSERT INTO "Reader" (firstname, lastname, mobile, email, address, city, state, pincode, isactive, createdat)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, NOW())
+                RETURNING *
+            `;
+            const insertResult = await client.query(insertReader, [firstname, lastname, mobile, email, address, city, state, pincode]);
+            reader = insertResult.rows[0];
+        } else {
+            reader = readerResult.rows[0];
+            const hasChanges =
+                reader.firstname !== firstname ||
+                reader.lastname !== lastname ||
+                reader.email !== email ||
+                reader.address !== address ||
+                reader.city !== city ||
+                reader.state !== state ||
+                reader.pincode !== pincode;
+
+            if (hasChanges) {
+                // Create history record
+                const insertHistory = `
+                    INSERT INTO "ReaderHistory" ("readerId", firstname, lastname, email, address, city, state, pincode, "changedAt")
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                `;
+                await client.query(insertHistory, [reader.id, reader.firstname, reader.lastname, reader.email, reader.address, reader.city, reader.state, reader.pincode]);
+
+                // Update reader
+                const updateReader = `
+                    UPDATE "Reader" SET 
+                        firstname = $1, lastname = $2, email = $3, address = $4, city = $5, state = $6, pincode = $7
+                    WHERE id = $8
+                    RETURNING *
+                `;
+                const updateResult = await client.query(updateReader, [firstname, lastname, email, address, city, state, pincode, reader.id]);
+                reader = updateResult.rows[0];
+            }
+        }
+
+        // 2. Check Stock and Create Order
+        const insertOrder = `
+            INSERT INTO "Order" ("readerId", "shippingDetails", status, "orderDate", "createdAt", "updatedAt")
+            VALUES ($1, $2, 'PENDING', NOW(), NOW(), NOW())
+            RETURNING *
+        `;
+        const orderResult = await client.query(insertOrder, [reader.id, shippingDetails]);
+        const order = orderResult.rows[0];
+
+        const orderedBooks = [];
+        for (const item of books) {
+            const bookId = parseInt(item.bookId);
+            const quantity = parseInt(item.quantity);
+
+            const bookResult = await client.query('SELECT * FROM "Book" WHERE id = $1', [bookId]);
+            if (bookResult.rows.length === 0) {
+                throw new Error(`Book with ID ${bookId} not found`);
+            }
+            const book = bookResult.rows[0];
+
+            const currentStock = book.stockQty || 0;
+            let bookStatus = 'NEW_ORDER';
+            if (currentStock < quantity) {
+                bookStatus = 'WAITLISTED';
             }
 
-            // 2. Check Stock and Prepare Ordered Books Data
-            const orderedBooksData = [];
+            const newStock = currentStock - quantity;
+            const isAvailable = newStock > 0;
 
-            for (const item of books) {
-                const bookId = parseInt(item.bookId);
-                const quantity = parseInt(item.quantity);
+            await client.query('UPDATE "Book" SET "stockQty" = $1, "isAvailable" = $2 WHERE id = $3', [newStock, isAvailable, bookId]);
 
-                const book = await prisma.book.findUnique({ where: { id: bookId } });
+            const insertOB = `
+                INSERT INTO "OrderedBook" ("orderId", "bookId", quantity, status)
+                VALUES ($1, $2, $3, $4)
+                RETURNING *
+            `;
+            const obResult = await client.query(insertOB, [order.id, bookId, quantity, bookStatus]);
+            orderedBooks.push(obResult.rows[0]);
+        }
 
-                if (!book) {
-                    throw new Error(`Book with ID ${bookId} not found`);
-                }
+        // Add Activity Log
+        const insertLog = `
+            INSERT INTO "ActivityLog" (description, "readerId", "orderId", "createdAt", action)
+            VALUES ($1, $2, $3, NOW(), 'NOTE')
+        `;
+        await client.query(insertLog, ['Order placed', reader.id, order.id]);
 
-                // Treat null/undefined stock as 0
-                const currentStock = book.stockQty || 0;
-
-                // Determine status based on stock availability
-                let bookStatus = 'NEW_ORDER'; // Default for in-stock
-                if (currentStock < quantity) {
-                    bookStatus = 'WAITLISTED';
-                }
-
-                const newStock = currentStock - quantity;
-                const isAvailable = newStock > 0;
-
-                await prisma.book.update({
-                    where: { id: bookId },
-                    data: {
-                        stockQty: newStock,
-                        isAvailable: isAvailable
-                    }
-                });
-
-                orderedBooksData.push({
-                    bookId: bookId,
-                    quantity: quantity,
-                    status: bookStatus
-                });
-            }
-
-            // 3. Create Order
-            const order = await prisma.order.create({
-                data: {
-                    readerId: reader.id,
-                    shippingDetails,
-                    status: 'PENDING',
-                    OrderedBook: {
-                        create: orderedBooksData
-                    },
-                    ActivityLog: {
-                        create: {
-                            description: 'Order placed',
-                            readerId: reader.id
-                        }
-                    }
-                },
-                include: {
-                    OrderedBook: true
-                }
-            });
-
-            return order;
-        });
-
-        res.status(201).json(result);
+        await client.query('COMMIT');
+        order.OrderedBook = orderedBooks;
+        res.status(201).json(order);
     } catch (error) {
+        await client.query('ROLLBACK');
         res.status(500).json({ error: error.message });
+    } finally {
+        client.release();
     }
 };
 
-// exports.getAllOrders = async (req, res) => {
-//     try {
-//         const orders = await prisma.order.findMany({
-//             include: {
-//                 Reader: true,
-//                 OrderedBook: { include: { Book: true } }
-//             },
-//             orderBy: { orderDate: 'desc' }
-//         });
-//         res.json(orders);
-//     } catch (error) {
-//         res.status(500).json({ error: error.message });
-//     }
-// };
-
 exports.getAllOrders = async (req, res) => {
     const { status, city, state, search } = req.query;
-    
     try {
-        const AND = [];
+        let conditions = [];
+        let values = [];
 
-        // Filter by Order Status (Multi-select)
         if (status) {
             const statuses = Array.isArray(status) ? status : [status];
-            AND.push({ status: { in: statuses } });
+            const placeholders = statuses.map(s => {
+                values.push(s);
+                return `$${values.length}`;
+            });
+            conditions.push(`o.status IN (${placeholders.join(',')})`);
         }
 
-        // Filter by City (derived from Reader address)
         if (city) {
             const cities = Array.isArray(city) ? city : [city];
-            AND.push({ Reader: { city: { in: cities } } });
+            const placeholders = cities.map(c => {
+                values.push(c);
+                return `$${values.length}`;
+            });
+            conditions.push(`r.city IN (${placeholders.join(',')})`);
         }
 
-        // Filter by State (derived from Reader address)
         if (state) {
             const states = Array.isArray(state) ? state : [state];
-            AND.push({ Reader: { state: { in: states } } });
-        }
-
-        // Search in Reader details or Shipping info
-        if (search) {
-            AND.push({
-                OR: [
-                    { Reader: { name: { contains: search, mode: 'insensitive' } } },
-                    { Reader: { email: { contains: search, mode: 'insensitive' } } },
-                    { shippingDetails: { contains: search, mode: 'insensitive' } }
-                ]
+            const placeholders = states.map(s => {
+                values.push(s);
+                return `$${values.length}`;
             });
+            conditions.push(`r.state IN (${placeholders.join(',')})`);
         }
 
-        const orders = await prisma.order.findMany({
-            where: AND.length > 0 ? { AND } : {},
-            include: {
-                Reader: true,
-                OrderedBook: { include: { Book: true } }
-            },
-            orderBy: { orderDate: 'desc' }
-        });
+        if (search) {
+            values.push(`%${search}%`);
+            const idx = values.length;
+            conditions.push(`(r.firstname ILIKE $${idx} OR r.lastname ILIKE $${idx} OR r.email ILIKE $${idx} OR o."shippingDetails" ILIKE $${idx})`);
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const query = `
+            SELECT o.*, row_to_json(r.*) as "Reader"
+            FROM "Order" o
+            JOIN "Reader" r ON o."readerId" = r.id
+            ${whereClause}
+            ORDER BY o."orderDate" DESC
+        `;
+        const result = await db.query(query, values);
+
+        const orders = result.rows;
+        for (let order of orders) {
+            const obResult = await db.query(`
+                SELECT ob.*, row_to_json(b.*) as "Book"
+                FROM "OrderedBook" ob
+                JOIN "Book" b ON ob."bookId" = b.id
+                WHERE ob."orderId" = $1
+             `, [order.id]);
+            order.OrderedBook = obResult.rows;
+        }
 
         res.json(orders);
     } catch (error) {
@@ -203,15 +177,21 @@ exports.getAllOrders = async (req, res) => {
 exports.getOrderById = async (req, res) => {
     try {
         const { id } = req.params;
-        const order = await prisma.order.findUnique({
-            where: { id: parseInt(id) },
-            include: {
-                Reader: true,
-                OrderedBook: { include: { Book: true } },
-                ActivityLog: true
-            }
-        });
-        if (!order) return res.status(404).json({ error: 'Order not found' });
+        const result = await db.query('SELECT o.*, row_to_json(r.*) as "Reader" FROM "Order" o JOIN "Reader" r ON o."readerId" = r.id WHERE o.id = $1', [parseInt(id)]);
+        if (result.rows.length === 0) return res.status(404).json({ error: 'Order not found' });
+        const order = result.rows[0];
+
+        const obResult = await db.query(`
+            SELECT ob.*, row_to_json(b.*) as "Book"
+            FROM "OrderedBook" ob
+            JOIN "Book" b ON ob."bookId" = b.id
+            WHERE ob."orderId" = $1
+        `, [order.id]);
+        order.OrderedBook = obResult.rows;
+
+        const logResult = await db.query('SELECT * FROM "ActivityLog" WHERE "orderId" = $1 ORDER BY "createdAt" DESC', [order.id]);
+        order.ActivityLog = logResult.rows;
+
         res.json(order);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -221,31 +201,20 @@ exports.getOrderById = async (req, res) => {
 exports.updateOrderStatus = async (req, res) => {
     try {
         const { id } = req.params;
-        const { status, description } = req.body; // description for log
+        const { status, description } = req.body;
 
-        const existingOrder = await prisma.order.findUnique({
-            where: { id: parseInt(id) },
-            select: { readerId: true, status: true }
-        });
+        const existingOrder = await db.query('SELECT "readerId", status FROM "Order" WHERE id = $1', [parseInt(id)]);
+        if (existingOrder.rows.length === 0) return res.status(404).json({ error: 'Order not found' });
 
-        if (!existingOrder) return res.status(404).json({ error: 'Order not found' });
+        const previousStatus = existingOrder.rows[0].status;
+        const readerId = existingOrder.rows[0].readerId;
 
-        const previousStatus = existingOrder.status;
+        const updateResult = await db.query('UPDATE "Order" SET status = $1, "updatedAt" = NOW() WHERE id = $2 RETURNING *', [status, parseInt(id)]);
 
-        const order = await prisma.order.update({
-            where: { id: parseInt(id) },
-            data: {
-                status,
-                ActivityLog: {
-                    create: {
-                        action: 'STATUS_CHANGE',
-                        description: description || `Order status updated from ${previousStatus} -> ${status}`,
-                        readerId: existingOrder.readerId
-                    }
-                }
-            }
-        });
-        res.json(order);
+        const logDesc = description || `Order status updated from ${previousStatus} -> ${status}`;
+        await db.query('INSERT INTO "ActivityLog" (action, description, "readerId", "orderId", "createdAt") VALUES ($1, $2, $3, $4, NOW())', ['STATUS_CHANGE', logDesc, readerId, parseInt(id)]);
+
+        res.json(updateResult.rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -254,13 +223,18 @@ exports.updateOrderStatus = async (req, res) => {
 exports.getOrdersByReader = async (req, res) => {
     try {
         const { readerId } = req.params;
-        const orders = await prisma.order.findMany({
-            where: { readerId: parseInt(readerId) },
-            include: {
-                OrderedBook: { include: { Book: true } }
-            },
-            orderBy: { orderDate: 'desc' }
-        });
+        const result = await db.query('SELECT * FROM "Order" WHERE "readerId" = $1 ORDER BY "orderDate" DESC', [parseInt(readerId)]);
+        const orders = result.rows;
+
+        for (let order of orders) {
+            const obResult = await db.query(`
+                SELECT ob.*, row_to_json(b.*) as "Book"
+                FROM "OrderedBook" ob
+                JOIN "Book" b ON ob."bookId" = b.id
+                WHERE ob."orderId" = $1
+             `, [order.id]);
+            order.OrderedBook = obResult.rows;
+        }
         res.json(orders);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -270,27 +244,21 @@ exports.getOrdersByReader = async (req, res) => {
 exports.getBookOrderStats = async (req, res) => {
     try {
         const { bookId } = req.params;
+        const query = `
+            SELECT ob.*, row_to_json(o.*) as "Order", row_to_json(r.*) as "Reader"
+            FROM "OrderedBook" ob
+            JOIN "Order" o ON ob."orderId" = o.id
+            JOIN "Reader" r ON o."readerId" = r.id
+            WHERE ob."bookId" = $1
+        `;
+        const result = await db.query(query, [parseInt(bookId)]);
+        const orderedBooks = result.rows;
 
-        // Find all ordered instances of this book
-        const orderedBooks = await prisma.orderedBook.findMany({
-            where: { bookId: parseInt(bookId) },
-            include: {
-                Order: {
-                    include: {
-                        Reader: true
-                    }
-                }
-            }
-        });
-
-        // Calculate total quantity
         const totalQuantity = orderedBooks.reduce((sum, item) => sum + item.quantity, 0);
-
-        // Get unique readers
         const readersMap = new Map();
         orderedBooks.forEach(item => {
-            if (item.Order && item.Order.Reader) {
-                readersMap.set(item.Order.Reader.id, item.Order.Reader);
+            if (item.Reader) {
+                readersMap.set(item.Reader.id, item.Reader);
             }
         });
         const distinctReaders = Array.from(readersMap.values());
@@ -313,41 +281,19 @@ exports.updateOrderedBookStatus = async (req, res) => {
         const parsedOrderId = parseInt(orderId);
         const parsedTargetId = parseInt(bookId);
 
-        // Try to find by Book ID (Foreign Key) first
-        let orderedBook = await prisma.orderedBook.findFirst({
-            where: {
-                orderId: parsedOrderId,
-                bookId: parsedTargetId
-            }
-        });
-
-        // If not found, try to find by OrderedBook ID (Primary Key)
-        if (!orderedBook) {
-            orderedBook = await prisma.orderedBook.findFirst({
-                where: {
-                    orderId: parsedOrderId,
-                    id: parsedTargetId
-                }
-            });
+        let result = await db.query('SELECT * FROM "OrderedBook" WHERE "orderId" = $1 AND "bookId" = $2', [parsedOrderId, parsedTargetId]);
+        if (result.rows.length === 0) {
+            result = await db.query('SELECT * FROM "OrderedBook" WHERE "orderId" = $1 AND id = $2', [parsedOrderId, parsedTargetId]);
         }
 
-        if (!orderedBook) {
-            return res.status(404).json({
-                error: 'Ordered book not found in this order',
-                debug: {
-                    receivedOrderId: orderId,
-                    receivedId: bookId,
-                    message: 'Tried matching against both bookId (FK) and id (PK)'
-                }
-            });
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Ordered book not found in this order' });
         }
 
-        const updated = await prisma.orderedBook.update({
-            where: { id: orderedBook.id },
-            data: { status }
-        });
+        const orderedBook = result.rows[0];
+        const updateResult = await db.query('UPDATE "OrderedBook" SET status = $1 WHERE id = $2 RETURNING *', [status, orderedBook.id]);
 
-        res.json(updated);
+        res.json(updateResult.rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -356,28 +302,24 @@ exports.updateOrderedBookStatus = async (req, res) => {
 exports.getOrdersByBook = async (req, res) => {
     try {
         const { bookId } = req.params;
+        const query = `
+            SELECT ob.*, row_to_json(o.*) as "Order"
+            FROM "OrderedBook" ob
+            JOIN "Order" o ON ob."orderId" = o.id
+            WHERE ob."bookId" = $1
+            ORDER BY o."createdAt" ASC
+        `;
+        const result = await db.query(query, [parseInt(bookId)]);
 
-        // Fetch ordered books with their associated order and reader details
-        // Ordered by creation date to support "priority wise" list
-        const results = await prisma.orderedBook.findMany({
-            where: {
-                bookId: parseInt(bookId)
-            },
-            include: {
-                Order: {
-                    include: {
-                        Reader: true
-                    }
-                }
-            },
-            orderBy: {
-                Order: {
-                    createdAt: 'asc' // Oldest orders first (priority)
-                }
+        // Populate readers in the result to match Prisma's include
+        for (let row of result.rows) {
+            if (row.Order && row.Order.readerId) {
+                const readerRes = await db.query('SELECT * FROM "Reader" WHERE id = $1', [row.Order.readerId]);
+                row.Order.Reader = readerRes.rows[0];
             }
-        });
+        }
 
-        res.json(results);
+        res.json(result.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

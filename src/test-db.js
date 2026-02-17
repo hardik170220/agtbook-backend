@@ -1,17 +1,18 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient({ log: ['query', 'info', 'warn', 'error'] });
+const db = require('./config/db');
 
 async function main() {
     console.log("Attempting to connect to database...");
     try {
-        await prisma.$connect();
-        console.log("Connection established. Querying languages...");
-        const languages = await prisma.language.findMany();
-        console.log("Success! Found languages:", languages);
+        const result = await db.query('SELECT NOW()');
+        console.log("Connection established. Current time:", result.rows[0].now);
+
+        console.log("Querying languages...");
+        const languages = await db.query('SELECT * FROM "Language"');
+        console.log("Success! Found languages:", languages.rows);
     } catch (e) {
         console.error("Detailed Error:", e);
     } finally {
-        await prisma.$disconnect();
+        await db.pool.end();
     }
 }
 

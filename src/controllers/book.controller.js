@@ -1,5 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const db = require("../config/db");
 
 const transformBook = (req, book) => ({
     ...book,
@@ -7,127 +6,125 @@ const transformBook = (req, book) => ({
     backImage: book.backImage ? `${req.protocol}://${req.get("host")}/api/books/${book.id}/image/back` : null,
 });
 
-// exports.getAllBooks = async (req, res) => {
-//     try {
-//         const page = parseInt(req.query.page) || 1;
-//         const limit = parseInt(req.query.limit) || 10;
-//         const search = req.query.search || "";
-//         const skip = (page - 1) * limit;
-
-//         const where = search ? {
-//             OR: [
-//                 { title: { contains: search, mode: "insensitive" } },
-//                 { author: { contains: search, mode: "insensitive" } },
-//                 { bookCode: isNaN(parseInt(search)) ? undefined : parseInt(search) }
-//             ].filter(Boolean)
-//         } : {};
-
-//         const [books, total] = await Promise.all([
-//             prisma.book.findMany({
-//                 where,
-//                 skip,
-//                 take: limit,
-//                 include: {
-//                     Language: true,
-//                     Category: true,
-//                 },
-//                 orderBy: { createdAt: "desc" }
-//             }),
-//             prisma.book.count({ where })
-//         ]);
-
-//         res.json({
-//             books,
-//             pagination: {
-//                 total,
-//                 page,
-//                 limit,
-//                 totalPages: Math.ceil(total / limit)
-//             }
-//         });
-//     } catch (error) {
-//         res.status(500).json({ error: error.message });
-//     }
-// };
-
 exports.getAllBooks = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const search = req.query.search || "";
-        const skip = (page - 1) * limit;
+        const offset = (page - 1) * limit;
 
-        // 1. Extract new filter parameters from query
         const {
             languageId, categoryId, isAvailable,
             kabatNumber, minPages, maxPages, bookSize,
             yearAD, vikramSamvat, veerSamvat
         } = req.query;
 
-        // 2. Build a dynamic WHERE clause using AND
-        const where = {
-            AND: [
-                // Search logic (keep your existing logic)
-                search ? {
-                    OR: [
-                        { title: { contains: search, mode: "insensitive" } },
-                        { author: { contains: search, mode: "insensitive" } },
-                        { bookCode: isNaN(parseInt(search)) ? undefined : parseInt(search) }
-                    ].filter(Boolean)
-                } : {},
+        let conditions = [];
+        let values = [];
 
-                // Language filter (handles single ID or array of IDs)
-                languageId ? {
-                    languageId: Array.isArray(languageId)
-                        ? { in: languageId.map(id => parseInt(id)) }
-                        : parseInt(languageId)
-                } : {},
+        if (search) {
+            values.push(`%${search}%`);
+            const searchIdx = values.length;
+            let searchConditions = [
+                `b.title ILIKE $${searchIdx}`,
+                `b.author ILIKE $${searchIdx}`
+            ];
+            if (!isNaN(parseInt(search))) {
+                values.push(parseInt(search));
+                searchConditions.push(`b."bookCode" = $${values.length}`);
+            }
+            conditions.push(`(${searchConditions.join(' OR ')})`);
+        }
 
-                // Category filter (handles single ID or array of IDs)
-                categoryId ? {
-                    categoryId: Array.isArray(categoryId)
-                        ? { in: categoryId.map(id => parseInt(id)) }
-                        : parseInt(categoryId)
-                } : {},
+        if (languageId) {
+            if (Array.isArray(languageId)) {
+                const placeholders = languageId.map((id) => {
+                    values.push(parseInt(id));
+                    return `$${values.length}`;
+                });
+                conditions.push(`b."languageId" IN (${placeholders.join(',')})`);
+            } else {
+                values.push(parseInt(languageId));
+                conditions.push(`b."languageId" = $${values.length}`);
+            }
+        }
 
-                // Availability filter (converts string "true"/"false" to boolean)
-                isAvailable !== undefined ? {
-                    isAvailable: isAvailable === "true"
-                } : {},
-                // Kabat Number
-                kabatNumber ? { kabatNumber: { contains: kabatNumber, mode: "insensitive" } } : {},
-                // Book Size
-                bookSize ? { bookSize: { contains: bookSize, mode: "insensitive" } } : {},
-                // Pages Range
-                (minPages || maxPages) ? {
-                    pages: {
-                        gte: minPages ? parseInt(minPages) : undefined,
-                        lte: maxPages ? parseInt(maxPages) : undefined
-                    }
-                } : {},
-                // Various Calendars
-                yearAD ? { yearAD: parseInt(yearAD) } : {},
-                vikramSamvat ? { vikramSamvat: parseInt(vikramSamvat) } : {},
-                veerSamvat ? { veerSamvat: parseInt(veerSamvat) } : {}
-            ].filter(q => Object.keys(q).length > 0) // Remove empty objects
-        };
+        if (categoryId) {
+            if (Array.isArray(categoryId)) {
+                const placeholders = categoryId.map((id) => {
+                    values.push(parseInt(id));
+                    return `$${values.length}`;
+                });
+                conditions.push(`b."categoryId" IN (${placeholders.join(',')})`);
+            } else {
+                values.push(parseInt(categoryId));
+                conditions.push(`b."categoryId" = $${values.length}`);
+            }
+        }
 
-        const [books, total] = await Promise.all([
-            prisma.book.findMany({
-                where,
-                skip,
-                take: limit,
-                include: {
-                    Language: true,
-                    Category: true,
-                },
-                orderBy: { createdAt: "desc" }
-            }),
-            prisma.book.count({ where })
-        ]);
+        if (isAvailable !== undefined) {
+            values.push(isAvailable === "true" || isAvailable === true);
+            conditions.push(`b."isAvailable" = $${values.length}`);
+        }
+
+        if (kabatNumber) {
+            values.push(`%${kabatNumber}%`);
+            conditions.push(`CAST(b."kabatNumber" AS TEXT) ILIKE $${values.length}`);
+        }
+
+        if (bookSize) {
+            values.push(`%${bookSize}%`);
+            conditions.push(`b."bookSize" ILIKE $${values.length}`);
+        }
+
+        if (minPages) {
+            values.push(parseInt(minPages));
+            conditions.push(`b."pages" >= $${values.length}`);
+        }
+
+        if (maxPages) {
+            values.push(parseInt(maxPages));
+            conditions.push(`b."pages" <= $${values.length}`);
+        }
+
+        if (yearAD) {
+            values.push(parseInt(yearAD));
+            conditions.push(`b."yearAD" = $${values.length}`);
+        }
+
+        if (vikramSamvat) {
+            values.push(parseInt(vikramSamvat));
+            conditions.push(`b."vikramSamvat" = $${values.length}`);
+        }
+
+        if (veerSamvat) {
+            values.push(parseInt(veerSamvat));
+            conditions.push(`b."veerSamvat" = $${values.length}`);
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+        const countQuery = `SELECT COUNT(*)::int as total FROM "Book" b ${whereClause}`;
+        const totalResult = await db.query(countQuery, values);
+        const total = totalResult.rows[0].total;
+
+        const dataQuery = `
+            SELECT b.*, 
+            row_to_json(l.*) as "Language", 
+            row_to_json(c.*) as "Category"
+            FROM "Book" b
+            LEFT JOIN "Language" l ON b."languageId" = l.id
+            LEFT JOIN "Category" c ON b."categoryId" = c.id
+            ${whereClause}
+            ORDER BY b."createdAt" DESC
+            LIMIT $${values.length + 1} OFFSET $${values.length + 2}
+        `;
+
+        const dataValues = [...values, limit, offset];
+        const booksResult = await db.query(dataQuery, dataValues);
 
         res.json({
-            books: books.map(book => transformBook(req, book)),
+            books: booksResult.rows.map(book => transformBook(req, book)),
             pagination: {
                 total,
                 page,
@@ -143,15 +140,18 @@ exports.getAllBooks = async (req, res) => {
 exports.getBookById = async (req, res) => {
     try {
         const { id } = req.params;
-        const book = await prisma.book.findUnique({
-            where: { id: parseInt(id) },
-            include: {
-                Language: true,
-                Category: true,
-            },
-        });
-        if (!book) return res.status(404).json({ error: "Book not found" });
-        res.json(transformBook(req, book));
+        const query = `
+            SELECT b.*, 
+            row_to_json(l.*) as "Language", 
+            row_to_json(c.*) as "Category"
+            FROM "Book" b
+            LEFT JOIN "Language" l ON b."languageId" = l.id
+            LEFT JOIN "Category" c ON b."categoryId" = c.id
+            WHERE b.id = $1
+        `;
+        const result = await db.query(query, [parseInt(id)]);
+        if (result.rows.length === 0) return res.status(404).json({ error: "Book not found" });
+        res.json(transformBook(req, result.rows[0]));
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -159,46 +159,43 @@ exports.getBookById = async (req, res) => {
 
 exports.createBook = async (req, res) => {
     try {
-        const { title, description, frontImage, backImage, stockQty, isAvailable, featured, languageId, categoryId, bookCode, kabatNumber, bookSize, author, tikakar, prakashak, sampadak, anuvadak, vishay, shreni1, shreni2, shreni3, pages, yearAD, vikramSamvat, veerSamvat, price, prakar, edition } = req.body;
+        const { title, description, stockQty, isAvailable, featured, languageId, categoryId, bookCode, kabatNumber, bookSize, author, tikakar, prakashak, sampadak, anuvadak, vishay, shreni1, shreni2, shreni3, pages, yearAD, vikramSamvat, veerSamvat, price, prakar, edition } = req.body;
 
         const parseIntSafe = (v) => {
             const parsed = parseInt(v);
             return isNaN(parsed) ? null : parsed;
         };
 
-        const book = await prisma.book.create({
-            data: {
-                title,
-                description: description || null,
-                frontImage: req.files && req.files["frontImage"] ? req.files["frontImage"][0].buffer : null,
-                backImage: req.files && req.files["backImage"] ? req.files["backImage"][0].buffer : null,
-                stockQty: parseIntSafe(stockQty) || 0,
-                isAvailable: isAvailable === "true" || isAvailable === true,
-                featured: featured === "true" || featured === true,
-                languageId: parseIntSafe(languageId),
-                categoryId: parseIntSafe(categoryId),
-                bookCode: parseIntSafe(bookCode),
-                kabatNumber: parseIntSafe(kabatNumber),
-                bookSize: bookSize || null,
-                author: author || null,
-                tikakar: tikakar || null,
-                prakashak: prakashak || null,
-                sampadak: sampadak || null,
-                anuvadak: anuvadak || null,
-                vishay: vishay || null,
-                shreni1: shreni1 || null,
-                shreni2: shreni2 || null,
-                shreni3: shreni3 || null,
-                pages: parseIntSafe(pages),
-                yearAD: parseIntSafe(yearAD),
-                vikramSamvat: parseIntSafe(vikramSamvat),
-                veerSamvat: parseIntSafe(veerSamvat),
-                price: parseFloat(price) || 0,
-                prakar: prakar || null,
-                edition: parseIntSafe(edition)
-            },
-        });
-        res.status(201).json(transformBook(req, book));
+        const frontImage = req.files && req.files["frontImage"] ? req.files["frontImage"][0].buffer : null;
+        const backImage = req.files && req.files["backImage"] ? req.files["backImage"][0].buffer : null;
+
+        const query = `
+            INSERT INTO "Book" (
+                title, description, "frontImage", "backImage", "stockQty", "isAvailable", 
+                featured, "languageId", "categoryId", "bookCode", "kabatNumber", "bookSize", 
+                author, tikakar, prakashak, sampadak, anuvadak, vishay, 
+                shreni1, shreni2, shreni3, pages, "yearAD", "vikramSamvat", 
+                "veerSamvat", price, prakar, edition, "createdAt", "updatedAt"
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 
+                $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, NOW(), NOW()
+            ) RETURNING *
+        `;
+
+        const values = [
+            title, description || null, frontImage, backImage,
+            parseIntSafe(stockQty) || 0, isAvailable === "true" || isAvailable === true,
+            featured === "true" || featured === true, parseIntSafe(languageId),
+            parseIntSafe(categoryId), parseIntSafe(bookCode), parseIntSafe(kabatNumber),
+            bookSize || null, author || null, tikakar || null, prakashak || null,
+            sampadak || null, anuvadak || null, vishay || null, shreni1 || null,
+            shreni2 || null, shreni3 || null, parseIntSafe(pages), parseIntSafe(yearAD),
+            parseIntSafe(vikramSamvat), parseIntSafe(veerSamvat), parseFloat(price) || 0,
+            prakar || null, parseIntSafe(edition)
+        ];
+
+        const result = await db.query(query, values);
+        res.status(201).json(transformBook(req, result.rows[0]));
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -214,51 +211,50 @@ exports.updateBook = async (req, res) => {
             return isNaN(parsed) ? null : parsed;
         };
 
-        const data = {
-            title,
-            description: description || null,
-            frontImage: frontImage || null,
-            backImage: backImage || null,
-            stockQty: parseIntSafe(stockQty) ?? 0,
-            isAvailable: isAvailable === "true" || isAvailable === true,
-            featured: featured === "true" || featured === true,
-            languageId: parseIntSafe(languageId),
-            categoryId: parseIntSafe(categoryId),
-            bookCode: parseIntSafe(bookCode),
-            kabatNumber: parseIntSafe(kabatNumber),
-            bookSize: bookSize || null,
-            author: author || null,
-            tikakar: tikakar || null,
-            prakashak: prakashak || null,
-            sampadak: sampadak || null,
-            anuvadak: anuvadak || null,
-            vishay: vishay || null,
-            shreni1: shreni1 || null,
-            shreni2: shreni2 || null,
-            shreni3: shreni3 || null,
-            pages: parseIntSafe(pages),
-            yearAD: parseIntSafe(yearAD),
-            vikramSamvat: parseIntSafe(vikramSamvat),
-            veerSamvat: parseIntSafe(veerSamvat),
-            price: parseFloat(price) || 0,
-            prakar: prakar || null,
-            edition: parseIntSafe(edition)
-        };
+        let frontImageBuffer = frontImage || null;
+        let backImageBuffer = backImage || null;
 
         if (req.files) {
             if (req.files["frontImage"]) {
-                data.frontImage = req.files["frontImage"][0].buffer;
+                frontImageBuffer = req.files["frontImage"][0].buffer;
             }
             if (req.files["backImage"]) {
-                data.backImage = req.files["backImage"][0].buffer;
+                backImageBuffer = req.files["backImage"][0].buffer;
             }
         }
 
-        const book = await prisma.book.update({
-            where: { id: parseInt(id) },
-            data,
-        });
-        res.json(transformBook(req, book));
+        // We only update images if they are provided as buffers
+        // If they are strings (like old URLs), we might need to be careful.
+        // Prisma code was setting them to null if not provided in the data.
+
+        const query = `
+            UPDATE "Book" SET
+                title = $1, description = $2, "frontImage" = $3, "backImage" = $4, 
+                "stockQty" = $5, "isAvailable" = $6, featured = $7, "languageId" = $8, 
+                "categoryId" = $9, "bookCode" = $10, "kabatNumber" = $11, "bookSize" = $12, 
+                author = $13, tikakar = $14, prakashak = $15, sampadak = $16, 
+                anuvadak = $17, vishay = $18, shreni1 = $19, shreni2 = $20, 
+                shreni3 = $21, pages = $22, "yearAD" = $23, "vikramSamvat" = $24, 
+                "veerSamvat" = $25, price = $26, prakar = $27, edition = $28, "updatedAt" = NOW()
+            WHERE id = $29
+            RETURNING *
+        `;
+
+        const values = [
+            title, description || null, frontImageBuffer, backImageBuffer,
+            parseIntSafe(stockQty) ?? 0, isAvailable === "true" || isAvailable === true,
+            featured === "true" || featured === true, parseIntSafe(languageId),
+            parseIntSafe(categoryId), parseIntSafe(bookCode), parseIntSafe(kabatNumber),
+            bookSize || null, author || null, tikakar || null, prakashak || null,
+            sampadak || null, anuvadak || null, vishay || null, shreni1 || null,
+            shreni2 || null, shreni3 || null, parseIntSafe(pages), parseIntSafe(yearAD),
+            parseIntSafe(vikramSamvat), parseIntSafe(veerSamvat), parseFloat(price) || 0,
+            prakar || null, parseIntSafe(edition), parseInt(id)
+        ];
+
+        const result = await db.query(query, values);
+        if (result.rows.length === 0) return res.status(404).json({ error: "Book not found" });
+        res.json(transformBook(req, result.rows[0]));
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -267,96 +263,18 @@ exports.updateBook = async (req, res) => {
 exports.deleteBook = async (req, res) => {
     try {
         const { id } = req.params;
-        await prisma.book.delete({
-            where: { id: parseInt(id) },
-        });
+        const result = await db.query('DELETE FROM "Book" WHERE id = $1 RETURNING id', [parseInt(id)]);
+        if (result.rows.length === 0) return res.status(404).json({ error: "Book not found" });
         res.json({ message: "Book deleted successfully" });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 };
 
-// exports.createMultipleBooks = async (req, res) => {
-//     try {
-//         const books = req.body;
-//         if (!Array.isArray(books)) {
-//             return res.status(400).json({ error: "Data must be an array of books" });
-//         }
-
-//         const parseIntSafe = (v) => {
-//             const parsed = parseInt(v);
-//             return isNaN(parsed) ? null : parsed;
-//         };
-
-//         const preparedBooks = books.map((item) => {
-//             const {
-//                 bookCode, kabatNumber, bookSize, title, description, frontImage, backImage, author,
-//                 tikakar, prakashak, sampadak, anuvadak, vishay, shreni1,
-//                 shreni2, shreni3, pages, yearAD, vikramSamvat, veerSamvat,
-//                 price, prakar, edition, isAvailable, featured, languageId,
-//                 categoryId, stockQty
-//             } = item;
-
-//             return {
-//                 bookCode: parseIntSafe(bookCode) || 0,
-//                 kabatNumber: parseIntSafe(kabatNumber),
-//                 bookSize: bookSize || null,
-//                 title: title || "Untitled",
-//                 description: description || null,
-//                 frontImage: frontImage || null,
-//                 backImage: backImage || null,
-//                 author: author || null,
-//                 tikakar: tikakar || null,
-//                 prakashak: prakashak || null,
-//                 sampadak: sampadak || null,
-//                 anuvadak: anuvadak || null,
-//                 vishay: vishay || null,
-//                 shreni1: shreni1 || null,
-//                 shreni2: shreni2 || null,
-//                 shreni3: shreni3 || null,
-//                 pages: parseIntSafe(pages),
-//                 yearAD: parseIntSafe(yearAD),
-//                 vikramSamvat: parseIntSafe(vikramSamvat),
-//                 veerSamvat: parseIntSafe(veerSamvat),
-//                 price: price ? parseFloat(price) : 0,
-//                 prakar: prakar || null,
-//                 edition: parseIntSafe(edition),
-//                 isAvailable: isAvailable === "true" || isAvailable === true,
-//                 featured: featured === "true" || featured === true,
-//                 languageId: parseIntSafe(languageId),
-//                 categoryId: parseIntSafe(categoryId),
-//                 stockQty: parseIntSafe(stockQty) ?? 0
-//             };
-//         });
-
-//         // Filter out items that are missing mandatory title or bookCode
-//         const validBooks = preparedBooks.filter(b => b.title && b.bookCode);
-
-//         if (validBooks.length === 0) {
-//             return res.status(400).json({ error: "No valid books found in the input data" });
-//         }
-
-//         const createdBooks = await prisma.book.createMany({
-//             data: validBooks,
-//             skipDuplicates: true,
-//         });
-
-//         res.status(201).json({
-//             message: `${createdBooks.count} books created successfully`,
-//             count: createdBooks.count,
-//             totalProcessed: preparedBooks.length,
-//             ignored: preparedBooks.length - validBooks.length
-//         });
-//     } catch (error) {
-//         res.status(500).json({ error: error.message });
-//     }
-// };
-
-
 exports.createMultipleBooks = async (req, res) => {
     try {
-        const books = req.body.books; // Expecting books array in req.body.books
-        
+        const books = req.body.books;
+
         if (!Array.isArray(books)) {
             return res.status(400).json({ error: "Data must be an array of books" });
         }
@@ -366,13 +284,10 @@ exports.createMultipleBooks = async (req, res) => {
             return isNaN(parsed) ? null : parsed;
         };
 
-        // Helper to get buffer from either req.files OR Base64 string in JSON body
         const getBuffer = (index, key, base64Data) => {
-            // 1. Check if file exists in multipart/form-data (files)
             if (req.files && req.files[`books[${index}][${key}]`]) {
                 return req.files[`books[${index}][${key}]`][0].buffer;
             }
-            // 2. Check if image was sent as Base64 string in JSON body
             if (base64Data && typeof base64Data === 'string' && base64Data.startsWith('data:image')) {
                 const base64String = base64Data.split(';base64,').pop();
                 return Buffer.from(base64String, 'base64');
@@ -383,63 +298,53 @@ exports.createMultipleBooks = async (req, res) => {
         const createdBooks = [];
         const errors = [];
 
-        // Process each book individually to handle file uploads
         for (let i = 0; i < books.length; i++) {
             try {
                 const item = books[i];
                 const {
-                    bookCode, kabatNumber, bookSize, title, description, 
-                    frontImage, backImage, author, tikakar, prakashak, 
-                    sampadak, anuvadak, vishay, shreni1, shreni2, shreni3, 
-                    pages, yearAD, vikramSamvat, veerSamvat, price, prakar, 
-                    edition, isAvailable, featured, languageId, categoryId, 
+                    bookCode, kabatNumber, bookSize, title, description,
+                    frontImage, backImage, author, tikakar, prakashak,
+                    sampadak, anuvadak, vishay, shreni1, shreni2, shreni3,
+                    pages, yearAD, vikramSamvat, veerSamvat, price, prakar,
+                    edition, isAvailable, featured, languageId, categoryId,
                     stockQty
                 } = item;
 
-                // Skip if missing mandatory fields
                 if (!title || !bookCode) {
                     errors.push({ index: i, error: "Missing title or bookCode" });
                     continue;
                 }
 
-                // Handle file uploads - check for both multipart files and Base64
                 const frontImageBuffer = getBuffer(i, 'frontImage', frontImage);
                 const backImageBuffer = getBuffer(i, 'backImage', backImage);
 
-                const book = await prisma.book.create({
-                    data: {
-                        title,
-                        description: description || null,
-                        frontImage: frontImageBuffer,
-                        backImage: backImageBuffer,
-                        stockQty: parseIntSafe(stockQty) ?? 0,
-                        isAvailable: isAvailable === "true" || isAvailable === true,
-                        featured: featured === "true" || featured === true,
-                        languageId: parseIntSafe(languageId),
-                        categoryId: parseIntSafe(categoryId),
-                        bookCode: parseIntSafe(bookCode) || 0,
-                        kabatNumber: parseIntSafe(kabatNumber),
-                        bookSize: bookSize || null,
-                        author: author || null,
-                        tikakar: tikakar || null,
-                        prakashak: prakashak || null,
-                        sampadak: sampadak || null,
-                        anuvadak: anuvadak || null,
-                        vishay: vishay || null,
-                        shreni1: shreni1 || null,
-                        shreni2: shreni2 || null,
-                        shreni3: shreni3 || null,
-                        pages: parseIntSafe(pages),
-                        yearAD: parseIntSafe(yearAD),
-                        vikramSamvat: parseIntSafe(vikramSamvat),
-                        veerSamvat: parseIntSafe(veerSamvat),
-                        price: price ? parseFloat(price) : 0,
-                        prakar: prakar || null,
-                        edition: parseIntSafe(edition)
-                    }
-                });
+                const query = `
+                    INSERT INTO "Book" (
+                        title, description, "frontImage", "backImage", "stockQty", "isAvailable", 
+                        featured, "languageId", "categoryId", "bookCode", "kabatNumber", "bookSize", 
+                        author, tikakar, prakashak, sampadak, anuvadak, vishay, 
+                        shreni1, shreni2, shreni3, pages, "yearAD", "vikramSamvat", 
+                        "veerSamvat", price, prakar, edition, "createdAt", "updatedAt"
+                    ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 
+                        $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, NOW(), NOW()
+                    ) RETURNING *
+                `;
 
-                createdBooks.push(transformBook(req, book));
+                const values = [
+                    title, description || null, frontImageBuffer, backImageBuffer,
+                    parseIntSafe(stockQty) ?? 0, isAvailable === "true" || isAvailable === true,
+                    featured === "true" || featured === true, parseIntSafe(languageId),
+                    parseIntSafe(categoryId), parseIntSafe(bookCode) || 0, parseIntSafe(kabatNumber),
+                    bookSize || null, author || null, tikakar || null, prakashak || null,
+                    sampadak || null, anuvadak || null, vishay || null, shreni1 || null,
+                    shreni2 || null, shreni3 || null, parseIntSafe(pages), parseIntSafe(yearAD),
+                    parseIntSafe(vikramSamvat), parseIntSafe(veerSamvat), price ? parseFloat(price) : 0,
+                    prakar || null, parseIntSafe(edition)
+                ];
+
+                const result = await db.query(query, values);
+                createdBooks.push(transformBook(req, result.rows[0]));
             } catch (error) {
                 errors.push({ index: i, error: error.message });
             }
@@ -461,22 +366,16 @@ exports.createMultipleBooks = async (req, res) => {
 exports.getBookImage = async (req, res) => {
     try {
         const { id, type } = req.params;
-        const book = await prisma.book.findUnique({
-            where: { id: parseInt(id) },
-            select: {
-                frontImage: type === 'front',
-                backImage: type === 'back'
-            }
-        });
+        const column = type === 'front' ? 'frontImage' : 'backImage';
+        const query = `SELECT "${column}" as image FROM "Book" WHERE id = $1`;
+        const result = await db.query(query, [parseInt(id)]);
 
-        if (!book) return res.status(404).json({ error: "Book not found" });
+        if (result.rows.length === 0) return res.status(404).json({ error: "Book not found" });
 
-        const image = type === 'front' ? book.frontImage : book.backImage;
+        const image = result.rows[0].image;
         if (!image) return res.status(404).json({ error: "Image not found" });
 
-        // You might want to store/detect the mime type, but usually images are jpeg/png
-        // For simplicity, we'll try to detect from the buffer or just serve as image/jpeg
-        res.set('Content-Type', 'image/jpeg'); // Defaulting to jpeg, browser usually handles it
+        res.set('Content-Type', 'image/jpeg');
         res.send(image);
     } catch (error) {
         res.status(500).json({ error: error.message });
