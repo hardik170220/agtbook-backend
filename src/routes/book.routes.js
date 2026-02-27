@@ -40,6 +40,8 @@ router.get('/:id', bookController.getBookById);
 router.post('/bulk', upload.any(), bookController.createMultipleBooks);
 router.post('/', uploadFields, bookController.createBook);
 router.put('/:id', uploadFields, bookController.updateBook);
+router.delete('/bulk-delete', bookController.deleteBooks);
 router.delete('/:id', bookController.deleteBook);
+
 
 module.exports = router;

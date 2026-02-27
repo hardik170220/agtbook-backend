@@ -703,6 +703,51 @@ exports.deleteBook = async (req, res) => {
     }
 };
 
+exports.deleteBooks = async (req, res) => {
+    try {
+        const { ids } = req.body;
+        
+
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ error: "Please provide an array of book IDs" });
+        }
+
+        // ✅ Filter out any NaN values after parsing
+        const parsedIds = ids.map(id => parseInt(id)).filter(id => !isNaN(id));
+
+        if (parsedIds.length === 0) {
+            return res.status(400).json({ error: "No valid integer IDs provided" });
+        }
+
+        console.log("Parsed IDs:", parsedIds); // 👈 Add this to debug
+
+        const existing = await db.query(
+            `SELECT "frontImage", "backImage" FROM "Book" WHERE id = ANY($1::int[])`,
+            [parsedIds]
+        );
+
+        if (existing.rows.length === 0) {
+            return res.status(404).json({ error: "No books found for the given IDs" });
+        }
+
+        await db.query('DELETE FROM "Book" WHERE id = ANY($1::int[])', [parsedIds]);
+
+        existing.rows.forEach(({ frontImage, backImage }) => {
+            deleteImageFile(frontImage);
+            deleteImageFile(backImage);
+        });
+
+        res.json({
+            message: `${existing.rows.length} book(s) deleted successfully`,
+            deletedCount: existing.rows.length
+        });
+    } catch (error) {
+        console.error("Bulk delete error:", error); // 👈 Full error in terminal
+        res.status(500).json({ error: error.message });
+    }
+};
+
+
 // exports.createMultipleBooks = async (req, res) => {
 //     console.log('req.body:', req.body);
 //     console.log('req.files:', req.files);
